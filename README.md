@@ -10,6 +10,8 @@ Chat-channel ↔ ACP agent gateway with scheduler.
 - Telegram
 - (Feishu planned)
 
+It uses **one ACP stdio agent process per conversation binding** to avoid cross-talk and support concurrency.
+
 It implements ACP stdio transport (JSON-RPC 2.0 over newline-delimited JSON) and supports the Client-side tool surface:
 
 - `session/update` streaming
@@ -47,13 +49,15 @@ npm run dev
 ## Chat commands (MVP)
 
 - `/new` reset session binding
-- `/allow <n>` allow the pending permission option by index
-- `/deny` deny the pending permission request
+- `/allow <n>` select a pending permission option by index
+- `/deny` reject a pending permission request (prefers `reject_once`)
+- `/cron help|list|add|del|enable|disable` manage scheduled prompts
 
 ## Security model (default)
 
 - File system and terminal tool calls are restricted to `WORKSPACE_ROOT`.
-- Potentially destructive tool calls require user confirmation.
+- Tool execution is **deny-by-default**; the user must approve via ACP permission flow.
+- You can persist policy choices (e.g. `allow_always` / `reject_always`) per conversation.
 
 ## Status
 

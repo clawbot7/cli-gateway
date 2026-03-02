@@ -1,19 +1,18 @@
 import { randomUUID } from 'node:crypto';
 
 import type { Db } from '../db/db.js';
-import { log } from '../logging.js';
 import type { AppConfig } from '../config.js';
+import { log } from '../logging.js';
 import {
+  bindingKeyFromConversationKey,
   createRun,
   createSession,
   deleteBinding,
   finishRun,
   getBinding,
   getSession,
-  updateAcpSessionId,
   upsertBinding,
   type ConversationKey,
-  bindingKeyFromConversationKey,
 } from './sessionStore.js';
 import {
   createJob,
@@ -21,30 +20,19 @@ import {
   listJobsForBinding,
   setJobEnabled,
 } from '../db/jobStore.js';
-import { ToolAuth, type ToolKind } from './toolAuth.js';
-import { AcpClient, type PermissionRequest } from '../acp/client.js';
-import type { InitializeResult } from '../acp/types.js';
+import { ToolAuth } from './toolAuth.js';
+import { BindingRuntime } from './bindingRuntime.js';
+import type { OutboundSink } from './types.js';
 
-export type OutboundSink = {
-  sendText: (text: string) => Promise<void>;
-};
+export type { OutboundSink } from './types.js';
 
 export class GatewayRouter {
   private readonly db: Db;
   private readonly config: AppConfig;
-  private readonly client: AcpClient;
   private readonly toolAuth: ToolAuth;
   private readonly onJobsChanged?: () => void;
 
-  private readonly pendingPermission = new Map<string, PermissionRequest>();
-
-  // Ensure the single ACP stdio process never multiplexes conversations.
-  private queue = Promise.resolve();
-
-  private currentConversationKey: ConversationKey | null = null;
-  private currentSink: OutboundSink | null = null;
-
-  private agentInit: InitializeResult | null = null;
+  private readonly runtimesBySessionKey = new Map<string, BindingRuntime>();
 
   constructor(params: {
     db: Db;
@@ -54,143 +42,61 @@ export class GatewayRouter {
     this.db = params.db;
     this.config = params.config;
     this.onJobsChanged = params.onJobsChanged;
-
     this.toolAuth = new ToolAuth(this.db);
-
-    this.client = new AcpClient({
-      db: this.db,
-      workspaceRoot: this.config.workspaceRoot,
-      agentCommand: this.config.acpAgentCommand,
-      agentArgs: this.config.acpAgentArgs,
-      toolAuth: this.toolAuth,
-      events: {
-        onSessionUpdate: async (_run, _sessionId, update) => {
-          const sink = this.currentSink;
-          if (!sink) return;
-
-          if (update?.sessionUpdate === 'agent_message_chunk') {
-            const block = update?.content;
-            const text = block?.text ?? '';
-            if (!text) return;
-            await sink.sendText(text);
-          }
-
-          if (
-            update?.sessionUpdate === 'tool_call' ||
-            update?.sessionUpdate === 'tool_call_update'
-          ) {
-            await sink.sendText(
-              `\n[tool] ${update?.title ?? update?.toolCallId ?? 'tool_call'}`,
-            );
-          }
-
-          if (update?.sessionUpdate === 'plan') {
-            await sink.sendText('\n[plan]\n');
-          }
-        },
-        onPermissionRequest: (req) => {
-          const key = this.currentConversationKey;
-          const sink = this.currentSink;
-          if (!key || !sink) return;
-
-          const keyStr = conversationKeyString(key);
-          this.pendingPermission.set(keyStr, req);
-
-          // Auto-apply persistent policy if present.
-          const bindingKey = bindingKeyFromConversationKey(key);
-          const toolKind = toToolKind(req.params.toolCall?.kind);
-          if (toolKind) {
-            const policy = this.toolAuth.getPersistentPolicy(
-              bindingKey,
-              toolKind,
-            );
-            if (policy === 'allow') {
-              const option = req.params.options.find(
-                (o) => o.kind === 'allow_always' || o.kind === 'allow_once',
-              );
-              if (option) {
-                this.toolAuth.grantOnce(req.sessionKey, toolKind, 1);
-                void this.client.respondPermission(req, {
-                  kind: 'selected',
-                  optionId: option.optionId,
-                });
-                this.pendingPermission.delete(keyStr);
-                void sink.sendText(`[permission] auto-allowed (${toolKind})`);
-                return;
-              }
-            }
-            if (policy === 'reject') {
-              const option = req.params.options.find(
-                (o) => o.kind === 'reject_always' || o.kind === 'reject_once',
-              );
-              if (option) {
-                void this.client.respondPermission(req, {
-                  kind: 'selected',
-                  optionId: option.optionId,
-                });
-                this.pendingPermission.delete(keyStr);
-                void sink.sendText(`[permission] auto-rejected (${toolKind})`);
-                return;
-              }
-            }
-          }
-
-          void sink.sendText(formatPermissionRequest(req));
-        },
-        onAgentStderr: (line) => {
-          log.debug('[agent stderr]', line);
-        },
-      },
-    });
   }
 
   async start(): Promise<void> {
-    this.agentInit = await this.client.initialize();
-    log.info('ACP initialized', {
-      protocolVersion: this.agentInit.protocolVersion,
-      loadSession: this.agentInit.agentCapabilities?.loadSession,
-    });
+    log.info('GatewayRouter ready');
   }
 
   close(): void {
-    this.client.close();
+    for (const rt of this.runtimesBySessionKey.values()) {
+      rt.close();
+    }
+    this.runtimesBySessionKey.clear();
   }
 
-  private async ensureSession(
-    key: ConversationKey,
-  ): Promise<{ sessionKey: string; acpSessionId: string }> {
-    const binding = getBinding(this.db, key);
+  private ensureBindingExists(key: ConversationKey): {
+    bindingKey: string;
+    sessionKey: string;
+  } {
+    const bindingKey = bindingKeyFromConversationKey(key);
+    const existing = getBinding(this.db, key);
+    if (existing) return { bindingKey, sessionKey: existing.sessionKey };
 
-    let sessionKey: string;
-    if (binding) {
-      sessionKey = binding.sessionKey;
-    } else {
-      sessionKey = randomUUID();
-      const init = this.agentInit ?? (await this.client.initialize());
+    const sessionKey = randomUUID();
 
-      createSession(this.db, {
-        sessionKey,
-        agentCommand: this.config.acpAgentCommand,
-        agentArgs: this.config.acpAgentArgs,
-        cwd: this.config.workspaceRoot,
-        loadSupported: Boolean(init.agentCapabilities?.loadSession),
-      });
+    // Create a minimal session row; runtime will update loadSupported after initialize.
+    createSession(this.db, {
+      sessionKey,
+      agentCommand: this.config.acpAgentCommand,
+      agentArgs: this.config.acpAgentArgs,
+      cwd: this.config.workspaceRoot,
+      loadSupported: false,
+    });
 
-      const newSession = await this.client.newSession({
-        cwd: this.config.workspaceRoot,
-        mcpServers: [],
-      });
-      updateAcpSessionId(this.db, sessionKey, newSession.sessionId);
-      upsertBinding(this.db, key, sessionKey);
-    }
+    upsertBinding(this.db, key, sessionKey);
 
-    const sess = getSession(this.db, sessionKey);
-    const acpSessionId = sess?.acpSessionId;
-    if (!acpSessionId) {
-      throw new Error('Missing acp_session_id');
-    }
+    return { bindingKey, sessionKey };
+  }
 
-    return { sessionKey, acpSessionId };
+  private getOrCreateRuntime(params: {
+    sessionKey: string;
+    bindingKey: string;
+  }): BindingRuntime {
+    const existing = this.runtimesBySessionKey.get(params.sessionKey);
+    if (existing) return existing;
+
+    const rt = new BindingRuntime({
+      db: this.db,
+      config: this.config,
+      toolAuth: this.toolAuth,
+      sessionKey: params.sessionKey,
+      bindingKey: params.bindingKey,
+    });
+
+    this.runtimesBySessionKey.set(params.sessionKey, rt);
+    return rt;
   }
 
   private async handleCommand(
@@ -205,6 +111,13 @@ export class GatewayRouter {
 
     switch (cmd) {
       case '/new': {
+        const existing = getBinding(this.db, key);
+        if (existing) {
+          const rt = this.runtimesBySessionKey.get(existing.sessionKey);
+          rt?.close();
+          this.runtimesBySessionKey.delete(existing.sessionKey);
+        }
+
         deleteBinding(this.db, key);
         await sink.sendText(
           'OK: binding cleared. Next message creates a new session.',
@@ -218,79 +131,37 @@ export class GatewayRouter {
           await sink.sendText('Usage: /allow <n>');
           return true;
         }
-        const pr = this.pendingPermission.get(conversationKeyString(key));
-        if (!pr) {
-          await sink.sendText('No pending permission request.');
-          return true;
-        }
-        const opt = pr.params.options[idx - 1];
-        if (!opt) {
-          await sink.sendText(`Invalid option index: ${idx}`);
+
+        const binding = getBinding(this.db, key);
+        if (!binding) {
+          await sink.sendText('No session binding. Send a message first.');
           return true;
         }
 
-        const toolKind = toToolKind(pr.params.toolCall?.kind);
         const bindingKey = bindingKeyFromConversationKey(key);
-
-        if (toolKind) {
-          if (opt.kind === 'allow_always') {
-            this.toolAuth.setPersistentPolicy(bindingKey, toolKind, 'allow');
-          }
-          if (opt.kind === 'reject_always') {
-            this.toolAuth.setPersistentPolicy(bindingKey, toolKind, 'reject');
-          }
-          if (opt.kind === 'allow_once' || opt.kind === 'allow_always') {
-            this.toolAuth.grantOnce(pr.sessionKey, toolKind, 1);
-          }
-        }
-
-        await this.client.respondPermission(pr, {
-          kind: 'selected',
-          optionId: opt.optionId,
+        const rt = this.getOrCreateRuntime({
+          sessionKey: binding.sessionKey,
+          bindingKey,
         });
-        this.pendingPermission.delete(conversationKeyString(key));
-        await sink.sendText(`OK: selected option ${idx} (${opt.name})`);
+
+        await rt.selectPermissionOption(idx, sink);
         return true;
       }
 
       case '/deny': {
-        const pr = this.pendingPermission.get(conversationKeyString(key));
-        if (!pr) {
-          await sink.sendText('No pending permission request.');
+        const binding = getBinding(this.db, key);
+        if (!binding) {
+          await sink.sendText('No session binding. Send a message first.');
           return true;
         }
 
         const bindingKey = bindingKeyFromConversationKey(key);
-        const toolKind = toToolKind(pr.params.toolCall?.kind);
+        const rt = this.getOrCreateRuntime({
+          sessionKey: binding.sessionKey,
+          bindingKey,
+        });
 
-        const rejectOnce = pr.params.options.find(
-          (o) => o.kind === 'reject_once',
-        );
-        const rejectAlways = pr.params.options.find(
-          (o) => o.kind === 'reject_always',
-        );
-
-        const selected = rejectOnce ?? rejectAlways;
-
-        if (selected && toolKind && selected.kind === 'reject_always') {
-          this.toolAuth.setPersistentPolicy(bindingKey, toolKind, 'reject');
-        }
-
-        if (selected) {
-          await this.client.respondPermission(pr, {
-            kind: 'selected',
-            optionId: selected.optionId,
-          });
-          this.pendingPermission.delete(conversationKeyString(key));
-          await sink.sendText(
-            `OK: selected ${selected.kind} (${selected.name})`,
-          );
-          return true;
-        }
-
-        await this.client.respondPermission(pr, { kind: 'cancelled' });
-        this.pendingPermission.delete(conversationKeyString(key));
-        await sink.sendText('OK: cancelled permission request.');
+        await rt.denyPermission(sink);
         return true;
       }
 
@@ -334,7 +205,7 @@ export class GatewayRouter {
 
         if (sub === 'add') {
           // Ensure binding exists so scheduler knows where to deliver.
-          await this.ensureSession(key);
+          this.ensureBindingExists(key);
 
           // Expect 5 cron fields then prompt text.
           const cronExpr = parts.slice(2, 7).join(' ');
@@ -394,75 +265,45 @@ export class GatewayRouter {
     }
   }
 
-  handleUserMessage(
+  async handleUserMessage(
     key: ConversationKey,
     text: string,
     sink: OutboundSink,
   ): Promise<void> {
-    this.queue = this.queue.then(async () => {
-      this.currentConversationKey = key;
-      this.currentSink = sink;
+    const commandHandled = await this.handleCommand(key, text, sink);
+    if (commandHandled) return;
 
-      try {
-        const commandHandled = await this.handleCommand(key, text, sink);
-        if (commandHandled) return;
+    const { bindingKey, sessionKey } = this.ensureBindingExists(key);
+    const rt = this.getOrCreateRuntime({ sessionKey, bindingKey });
 
-        const { sessionKey, acpSessionId } = await this.ensureSession(key);
+    // Ensure session row exists (cron may have created binding+session already).
+    const sess = getSession(this.db, sessionKey);
+    if (!sess) {
+      createSession(this.db, {
+        sessionKey,
+        agentCommand: this.config.acpAgentCommand,
+        agentArgs: this.config.acpAgentArgs,
+        cwd: this.config.workspaceRoot,
+        loadSupported: false,
+      });
+    }
 
-        const runId = randomUUID();
-        createRun(this.db, { runId, sessionKey, promptText: text });
+    const runId = randomUUID();
+    createRun(this.db, { runId, sessionKey, promptText: text });
 
-        const run = { runId, sessionKey, createdAtMs: Date.now() };
+    try {
+      const stopReason = await rt.prompt({
+        runId,
+        promptText: text,
+        sink,
+      });
 
-        const result = await this.client.prompt(run, {
-          sessionId: acpSessionId,
-          prompt: [{ type: 'text', text }],
-        });
-
-        finishRun(this.db, { runId, stopReason: result.stopReason });
-      } catch (error: any) {
-        // best-effort record
-        log.error('handleUserMessage error', error);
-        await sink.sendText(`Error: ${String(error?.message ?? error)}`);
-      } finally {
-        this.currentConversationKey = null;
-        this.currentSink = null;
-      }
-    });
-
-    return this.queue;
+      finishRun(this.db, { runId, stopReason });
+    } catch (error: any) {
+      finishRun(this.db, { runId, error: String(error?.message ?? error) });
+      await sink.sendText(`Error: ${String(error?.message ?? error)}`);
+    }
   }
-}
-
-function conversationKeyString(key: ConversationKey): string {
-  return [key.platform, key.chatId, key.threadId ?? '-', key.userId].join(':');
-}
-
-function formatPermissionRequest(req: PermissionRequest): string {
-  const options = req.params.options
-    .map((o, i) => `${i + 1}. ${o.name} (${o.kind})`)
-    .join('\n');
-
-  return `\n[permission required]\nTool: ${req.params.toolCall?.title ?? req.params.toolCall?.toolCallId ?? 'tool_call'}\n${options}\nReply with /allow <n> or /deny`;
-}
-
-function toToolKind(kind: unknown): ToolKind | null {
-  if (typeof kind !== 'string') return null;
-
-  const allowed: ToolKind[] = [
-    'read',
-    'edit',
-    'delete',
-    'move',
-    'search',
-    'execute',
-    'think',
-    'fetch',
-    'switch_mode',
-    'other',
-  ];
-
-  return allowed.includes(kind as ToolKind) ? (kind as ToolKind) : null;
 }
 
 function truncate(text: string, max: number): string {

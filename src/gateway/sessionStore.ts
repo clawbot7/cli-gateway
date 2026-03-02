@@ -104,6 +104,17 @@ export function updateAcpSessionId(
   ).run(acpSessionId, now, sessionKey);
 }
 
+export function updateLoadSupported(
+  db: Db,
+  sessionKey: string,
+  loadSupported: boolean,
+): void {
+  const now = Date.now();
+  db.prepare(
+    'UPDATE sessions SET load_supported = ?, updated_at = ? WHERE session_key = ?',
+  ).run(loadSupported ? 1 : 0, now, sessionKey);
+}
+
 export function getSession(
   db: Db,
   sessionKey: string,
