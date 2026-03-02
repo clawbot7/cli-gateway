@@ -1,0 +1,44 @@
+{
+  "name": "cli-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Chat-channel ↔ ACP agent gateway with scheduler",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "lint": "eslint .",
+    "format": "prettier -w .",
+    "test": "node --test"
+  },
+  "keywords": [
+    "acp",
+    "agent-client-protocol",
+    "discord",
+    "telegram",
+    "feishu"
+  ],
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "commander": "^14.0.3",
+    "discord.js": "^14.25.1",
+    "dotenv": "^16.6.1",
+    "grammy": "^1.41.0",
+    "node-cron": "^4.2.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.3.3",
+    "eslint": "^10.0.2",
+    "prettier": "^3.8.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1"
+  }
+}
