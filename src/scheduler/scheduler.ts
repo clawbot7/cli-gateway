@@ -17,7 +17,7 @@ export function startScheduler(params: {
     platform: Platform,
     chatId: string,
     threadId: string | null,
-  ) => Promise<OutboundSink & { flush?: () => Promise<void> }>;
+  ) => Promise<OutboundSink>;
 }): Scheduler {
   let tasks: cron.ScheduledTask[] = [];
 
@@ -95,7 +95,6 @@ export function startScheduler(params: {
           sink,
         );
 
-        await sink.flush?.();
       });
 
       tasks.push(task);

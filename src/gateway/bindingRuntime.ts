@@ -24,6 +24,9 @@ export class BindingRuntime {
 
   private pendingPermission: PermissionRequest | null = null;
 
+  private currentRunId: string | null = null;
+  private currentRunLastSeq = 0;
+
   constructor(params: {
     db: Db;
     config: AppConfig;
@@ -44,7 +47,11 @@ export class BindingRuntime {
       agentArgs: this.config.acpAgentArgs,
       toolAuth: this.toolAuth,
       events: {
-        onSessionUpdate: async (_run, _sessionId, update) => {
+        onSessionUpdate: async (run, _sessionId, update, eventSeq) => {
+          if (run.runId === this.currentRunId) {
+            this.currentRunLastSeq = Math.max(this.currentRunLastSeq, eventSeq);
+          }
+
           const sink = this.activeSink;
           if (!sink) return;
 
@@ -198,6 +205,10 @@ export class BindingRuntime {
     await sink.sendText(`OK: selected option ${idx} (${opt.name})`);
   }
 
+  hasSessionId(): boolean {
+    return Boolean(this.acpSessionId);
+  }
+
   async denyPermission(sink: OutboundSink): Promise<void> {
     const pr = this.pendingPermission;
     if (!pr) {
@@ -236,11 +247,16 @@ export class BindingRuntime {
     runId: string;
     promptText: string;
     sink: OutboundSink;
-  }): Promise<string> {
+    contextText?: string;
+  }): Promise<{ stopReason: string; lastSeq: number }> {
     const next = this.queue.then(async () => {
+      const isFreshSession = !this.acpSessionId;
       const sessionId = await this.ensureSessionId();
 
+      this.currentRunId = params.runId;
+      this.currentRunLastSeq = 0;
       this.activeSink = params.sink;
+
       try {
         const run = {
           runId: params.runId,
@@ -248,14 +264,23 @@ export class BindingRuntime {
           createdAtMs: Date.now(),
         };
 
+        const blocks = [] as Array<{ type: 'text'; text: string }>;
+
+        if (isFreshSession && params.contextText?.trim()) {
+          blocks.push({ type: 'text', text: params.contextText });
+        }
+
+        blocks.push({ type: 'text', text: params.promptText });
+
         const result = await this.client.prompt(run, {
           sessionId,
-          prompt: [{ type: 'text', text: params.promptText }],
+          prompt: blocks,
         });
 
-        return result.stopReason;
+        return { stopReason: result.stopReason, lastSeq: this.currentRunLastSeq };
       } finally {
         this.activeSink = null;
+        this.currentRunId = null;
       }
     });
 

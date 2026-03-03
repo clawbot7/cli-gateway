@@ -20,9 +20,11 @@ import {
   listJobsForBinding,
   setJobEnabled,
 } from '../db/jobStore.js';
+import { upsertDeliveryCheckpoint } from '../db/deliveryCheckpointStore.js';
 import { ToolAuth } from './toolAuth.js';
 import { BindingRuntime } from './bindingRuntime.js';
 import type { OutboundSink } from './types.js';
+import { buildReplayContextFromRecentRuns } from './history.js';
 
 export type { OutboundSink } from './types.js';
 
@@ -178,6 +180,124 @@ export class GatewayRouter {
         await sink.sendText(
           'OK: binding cleared. Next message creates a new session.',
         );
+        return true;
+      }
+
+      case '/last': {
+        const binding = getBinding(this.db, key);
+        if (!binding) {
+          await sink.sendText('No session binding. Send a message first.');
+          return true;
+        }
+
+        const lastRun = this.db
+          .prepare(
+            'SELECT run_id as runId, stop_reason as stopReason, error FROM runs WHERE session_key = ? ORDER BY started_at DESC LIMIT 1',
+          )
+          .get(binding.sessionKey) as
+          | { runId: string; stopReason: string | null; error: string | null }
+          | undefined;
+
+        if (!lastRun) {
+          await sink.sendText('No runs for this session yet.');
+          return true;
+        }
+
+        const rows = this.db
+          .prepare(
+            'SELECT payload_json as payloadJson FROM events WHERE run_id = ? ORDER BY seq ASC',
+          )
+          .all(lastRun.runId) as Array<{ payloadJson: string }>;
+
+        let text = '';
+        for (const row of rows) {
+          try {
+            const payload = JSON.parse(row.payloadJson);
+            const update = payload?.update;
+            if (update?.sessionUpdate !== 'agent_message_chunk') continue;
+            text += update?.content?.text ?? '';
+          } catch {
+            // ignore malformed rows
+          }
+        }
+
+        if (!text.trim()) {
+          const fallback =
+            lastRun.error ? `Last run error: ${lastRun.error}` : lastRun.stopReason;
+          await sink.sendText(fallback ? String(fallback) : '(no output)');
+          return true;
+        }
+
+        await sink.sendText(text);
+        return true;
+      }
+
+      case '/replay': {
+        const binding = getBinding(this.db, key);
+        if (!binding) {
+          await sink.sendText('No session binding. Send a message first.');
+          return true;
+        }
+
+        const bindingKey = bindingKeyFromConversationKey(key);
+
+        let runId = parts[1] ?? '';
+        if (!runId) {
+          const last = this.db
+            .prepare(
+              'SELECT run_id as runId FROM runs WHERE session_key = ? ORDER BY started_at DESC LIMIT 1',
+            )
+            .get(binding.sessionKey) as { runId: string } | undefined;
+
+          runId = last?.runId ?? '';
+        }
+
+        if (!runId) {
+          await sink.sendText('No runs for this session yet.');
+          return true;
+        }
+
+        const rows = this.db
+          .prepare(
+            'SELECT seq, method, payload_json as payloadJson FROM events WHERE run_id = ? ORDER BY seq ASC',
+          )
+          .all(runId) as Array<{ seq: number; method: string; payloadJson: string }>;
+
+        let sent = false;
+        let maxSeq = 0;
+
+        for (const row of rows) {
+          maxSeq = Math.max(maxSeq, row.seq);
+          if (row.method !== 'session/update') continue;
+
+          try {
+            const payload = JSON.parse(row.payloadJson);
+            const delta = renderSessionUpdateDelta(payload?.update);
+            if (!delta) continue;
+            await sink.sendText(delta);
+            sent = true;
+          } catch {
+            // ignore malformed rows
+          }
+        }
+
+        if (!sent) {
+          await sink.sendText('(no replayable output)');
+        }
+
+        await sink.flush?.();
+
+        const state = sink.getDeliveryState?.();
+        if (state) {
+          upsertDeliveryCheckpoint(this.db, {
+            bindingKey,
+            runId,
+            lastSeq: maxSeq,
+            messageId: state.messageId,
+            text: state.text,
+          });
+        }
+
         return true;
       }
 
@@ -347,19 +467,73 @@ export class GatewayRouter {
     const runId = randomUUID();
     createRun(this.db, { runId, sessionKey, promptText: text });
 
+    let contextText = '';
+    if (
+      this.config.contextReplayEnabled &&
+      this.config.contextReplayRuns > 0 &&
+      !rt.hasSessionId()
+    ) {
+      contextText = buildReplayContextFromRecentRuns(this.db, {
+        sessionKey,
+        excludeRunId: runId,
+        maxRuns: this.config.contextReplayRuns,
+        maxChars: this.config.contextReplayMaxChars,
+      });
+    }
+
     try {
-      const stopReason = await rt.prompt({
+      const result = await rt.prompt({
         runId,
         promptText: text,
         sink,
+        contextText,
       });
 
-      finishRun(this.db, { runId, stopReason });
+      finishRun(this.db, { runId, stopReason: result.stopReason });
     } catch (error: any) {
       finishRun(this.db, { runId, error: String(error?.message ?? error) });
       await sink.sendText(`Error: ${String(error?.message ?? error)}`);
+    } finally {
+      try {
+        await sink.flush?.();
+      } catch (error) {
+        log.warn('sink flush error', error);
+      }
+
+      const state = sink.getDeliveryState?.();
+      if (state) {
+        const row = this.db
+          .prepare('SELECT MAX(seq) as maxSeq FROM events WHERE run_id = ?')
+          .get(runId) as { maxSeq: number | null } | undefined;
+
+        upsertDeliveryCheckpoint(this.db, {
+          bindingKey,
+          runId,
+          lastSeq: row?.maxSeq ?? 0,
+          messageId: state.messageId,
+          text: state.text,
+        });
+      }
     }
   }
+}
+
+function renderSessionUpdateDelta(update: any): string {
+  if (!update || typeof update !== 'object') return '';
+
+  if (update.sessionUpdate === 'agent_message_chunk') {
+    return update?.content?.text ?? '';
+  }
+
+  if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update') {
+    return `\n[tool] ${update?.title ?? update?.toolCallId ?? 'tool_call'}`;
+  }
+
+  if (update.sessionUpdate === 'plan') {
+    return '\n[plan]\n';
+  }
+
+  return '';
 }
 
 function truncate(text: string, max: number): string {

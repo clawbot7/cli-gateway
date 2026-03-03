@@ -57,7 +57,12 @@ export type PermissionDecision =
   | { kind: 'cancelled' };
 
 export type AcpClientEvents = {
-  onSessionUpdate?: (run: AcpRun, sessionId: string, update: any) => void;
+  onSessionUpdate?: (
+    run: AcpRun,
+    sessionId: string,
+    update: any,
+    eventSeq: number,
+  ) => void;
   onPermissionRequest?: (req: PermissionRequest) => void;
   onAgentStderr?: (line: string) => void;
 };
@@ -198,8 +203,17 @@ export class AcpClient {
         const sessionId = params?.sessionId as string | undefined;
         const update = params?.update;
         if (this.currentRun && sessionId) {
-          this.appendEvent(this.currentRun.runId, 'session/update', params);
-          this.events.onSessionUpdate?.(this.currentRun, sessionId, update);
+          const eventSeq = this.appendEvent(
+            this.currentRun.runId,
+            'session/update',
+            params,
+          );
+          void this.events.onSessionUpdate?.(
+            this.currentRun,
+            sessionId,
+            update,
+            eventSeq,
+          );
         }
       }
       return;
@@ -333,7 +347,7 @@ export class AcpClient {
     this.rpc.write({ jsonrpc: '2.0', id, error: { code, message } });
   }
 
-  private appendEvent(runId: string, method: string, payload: unknown): void {
+  private appendEvent(runId: string, method: string, payload: unknown): number {
     const prev = this.runSeq.get(runId) ?? 0;
     const seq = prev + 1;
     this.runSeq.set(runId, seq);
@@ -343,6 +357,8 @@ export class AcpClient {
         'INSERT INTO events(run_id, seq, method, payload_json, created_at) VALUES(?, ?, ?, ?, ?)',
       )
       .run(runId, seq, method, JSON.stringify(payload), Date.now());
+
+    return seq;
   }
 
   private assertAuthorized(kind: ToolKind): void {

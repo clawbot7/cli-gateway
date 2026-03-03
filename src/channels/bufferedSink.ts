@@ -1,6 +1,12 @@
+export type BufferedSinkState = {
+  text: string;
+  messageId: string | null;
+};
+
 export type BufferedSink = {
   sendText: (delta: string) => Promise<void>;
   flush: () => Promise<void>;
+  getState: () => BufferedSinkState;
 };
 
 export function createBufferedSink(params: {
@@ -8,9 +14,10 @@ export function createBufferedSink(params: {
   flushIntervalMs: number;
   send: (text: string) => Promise<{ id: string }>;
   edit: (id: string, text: string) => Promise<void>;
+  initialState?: BufferedSinkState;
 }): BufferedSink {
-  let currentText = '';
-  let currentMessageId: string | null = null;
+  let currentText = params.initialState?.text ?? '';
+  let currentMessageId: string | null = params.initialState?.messageId ?? null;
   let flushTimer: NodeJS.Timeout | null = null;
   let flushing = false;
 
@@ -26,7 +33,12 @@ export function createBufferedSink(params: {
         return;
       }
 
-      await params.edit(currentMessageId, truncate(currentText, params.maxLen));
+      try {
+        await params.edit(currentMessageId, truncate(currentText, params.maxLen));
+      } catch {
+        const res = await params.send(truncate(currentText, params.maxLen));
+        currentMessageId = res.id;
+      }
     } finally {
       flushing = false;
     }
@@ -43,7 +55,6 @@ export function createBufferedSink(params: {
   async function sendText(delta: string): Promise<void> {
     if (!delta) return;
 
-    // If the buffer grows too large, finalize current message and start a new one.
     if (currentText.length + delta.length > params.maxLen * 1.5) {
       await doFlush();
       currentText = '';
@@ -63,6 +74,7 @@ export function createBufferedSink(params: {
       }
       await doFlush();
     },
+    getState: () => ({ text: currentText, messageId: currentMessageId }),
   };
 }
 

@@ -52,12 +52,23 @@ npm run dev
 - `/allow <n>` select a pending permission option by index
 - `/deny` reject a pending permission request (prefers `reject_once`)
 - `/cron help|list|add|del|enable|disable` manage scheduled prompts
+- `/last` show last run output for this session
+- `/replay [runId]` replay stored `session/update` output for a run (best-effort)
 
 ## Security model (default)
 
 - File system and terminal tool calls are restricted to `WORKSPACE_ROOT`.
 - Tool execution is **deny-by-default**; the user must approve via ACP permission flow.
 - You can persist policy choices (e.g. `allow_always` / `reject_always`) per conversation.
+
+## Memory (context replay)
+
+ACP sessions are process-local; if the gateway restarts (or an idle runtime is GC'ed), the new ACP session would otherwise start "blank".
+
+To reduce this, `cli-gateway` can replay recent conversation runs from the DB into the first prompt of a fresh ACP session:
+
+- Env: `CONTEXT_REPLAY_ENABLED`, `CONTEXT_REPLAY_RUNS`, `CONTEXT_REPLAY_MAX_CHARS`
+- Default: enabled, last 8 runs, max 12k chars
 
 ## Status
 

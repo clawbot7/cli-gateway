@@ -1,6 +1,6 @@
 import type { Db } from './db.js';
 
-const LATEST_VERSION = 2;
+const LATEST_VERSION = 3;
 
 export function migrate(db: Db): void {
   db.exec(
@@ -101,6 +101,27 @@ export function migrate(db: Db): void {
       );
 
       UPDATE schema_version SET version = 2;
+      `,
+    );
+  }
+
+  if (current < 3) {
+    db.exec(
+      `
+      CREATE TABLE IF NOT EXISTS delivery_checkpoints (
+        binding_key TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        last_seq INTEGER NOT NULL DEFAULT 0,
+        message_id TEXT,
+        text TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY(binding_key, run_id),
+        FOREIGN KEY(binding_key) REFERENCES bindings(binding_key),
+        FOREIGN KEY(run_id) REFERENCES runs(run_id)
+      );
+
+      UPDATE schema_version SET version = 3;
       `,
     );
   }

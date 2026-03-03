@@ -66,7 +66,6 @@ export async function startDiscord(
       const sink = createDiscordSink(channel);
 
       await router.handleUserMessage(key, text, sink);
-      await sink.flush();
     } catch (error) {
       log.error('Discord message handler error', error);
     }
@@ -106,5 +105,6 @@ function createDiscordSink(
   return {
     sendText: buffered.sendText,
     flush: buffered.flush,
+    getDeliveryState: buffered.getState,
   };
 }

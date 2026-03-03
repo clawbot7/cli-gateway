@@ -46,7 +46,6 @@ export async function startTelegram(
         threadId ? Number(threadId) : null,
       );
       await router.handleUserMessage(key, text, sink);
-      await sink.flush();
     } catch (error) {
       log.error('Telegram message handler error', error);
     }
@@ -93,5 +92,6 @@ function createTelegramSink(
   return {
     sendText: buffered.sendText,
     flush: buffered.flush,
+    getDeliveryState: buffered.getState,
   };
 }
