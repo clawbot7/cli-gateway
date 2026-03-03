@@ -138,11 +138,23 @@ export async function startTelegram(
     log.error('Telegram bot error', err);
   });
 
-  void bot.start().catch((err) => {
-    log.error('Telegram bot start error', err);
-  });
+  // Ensure webhook is disabled and optionally clear backlog.
+  void bot.api
+    .deleteWebhook({ drop_pending_updates: true })
+    .catch((err) => log.warn('Telegram deleteWebhook error', err));
 
-  log.info('Telegram bot started');
+  void bot
+    .start({
+      allowed_updates: ['message', 'callback_query'],
+    })
+    .catch((err) => {
+      log.error('Telegram bot start error', err);
+    });
+
+  log.info('Telegram bot started (long polling)', {
+    allowedUpdates: ['message', 'callback_query'],
+    dropPendingUpdates: true,
+  });
 
   return {
     createSink: (chatId, threadId, userId) =>
