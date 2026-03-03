@@ -26,7 +26,7 @@ export async function startTelegram(
 
   const bot = new Bot(config.telegramToken);
 
-  bot.on('callback_query', async (ctx) => {
+  bot.on('callback_query:data', async (ctx) => {
     const data = ctx.callbackQuery.data ?? '';
 
     // Always answer quickly so the Telegram client doesn't hang.
@@ -44,7 +44,11 @@ export async function startTelegram(
       const requestId = parts[2] ?? '';
       const decision = parts[3] ?? '';
 
-      if (!sessionKey || !requestId || (decision !== 'allow' && decision !== 'deny')) {
+      if (
+        !sessionKey ||
+        !requestId ||
+        (decision !== 'allow' && decision !== 'deny')
+      ) {
         return;
       }
 
