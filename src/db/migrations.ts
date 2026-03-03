@@ -1,6 +1,6 @@
 import type { Db } from './db.js';
 
-const LATEST_VERSION = 3;
+const LATEST_VERSION = 4;
 
 export function migrate(db: Db): void {
   db.exec(
@@ -122,6 +122,23 @@ export function migrate(db: Db): void {
       );
 
       UPDATE schema_version SET version = 3;
+      `,
+    );
+  }
+
+  if (current < 4) {
+    db.exec(
+      `
+      CREATE TABLE IF NOT EXISTS ui_prefs (
+        binding_key TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY(binding_key),
+        FOREIGN KEY(binding_key) REFERENCES bindings(binding_key)
+      );
+
+      UPDATE schema_version SET version = 4;
       `,
     );
   }

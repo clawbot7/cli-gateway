@@ -22,9 +22,10 @@ import {
   setJobEnabled,
 } from '../db/jobStore.js';
 import { upsertDeliveryCheckpoint } from '../db/deliveryCheckpointStore.js';
+import { getUiMode, setUiMode } from '../db/uiPrefStore.js';
 import { ToolAuth } from './toolAuth.js';
 import { BindingRuntime } from './bindingRuntime.js';
-import type { OutboundSink } from './types.js';
+import type { OutboundSink, UiMode } from './types.js';
 import { buildReplayContextFromRecentRuns } from './history.js';
 
 export type { OutboundSink } from './types.js';
@@ -273,6 +274,34 @@ export class GatewayRouter {
         }
 
         await sink.sendText(text);
+        return true;
+      }
+
+      case '/ui': {
+        const binding = getBinding(this.db, key);
+        if (!binding) {
+          await sink.sendText('No session binding. Send a message first.');
+          return true;
+        }
+
+        const bindingKey = bindingKeyFromConversationKey(key);
+        const arg = (parts[1] ?? '').toLowerCase();
+
+        const current =
+          getUiMode(this.db, bindingKey) ?? this.config.uiDefaultMode;
+
+        if (!arg || arg === 'show') {
+          await sink.sendText(`UI mode: ${current}`);
+          return true;
+        }
+
+        if (arg !== 'verbose' && arg !== 'summary') {
+          await sink.sendText('Usage: /ui verbose|summary');
+          return true;
+        }
+
+        setUiMode(this.db, bindingKey, arg as UiMode);
+        await sink.sendText(`OK: UI mode set to ${arg}`);
         return true;
       }
 
@@ -526,10 +555,13 @@ export class GatewayRouter {
     }
 
     try {
+      const uiMode = getUiMode(this.db, bindingKey) ?? this.config.uiDefaultMode;
+
       const result = await rt.prompt({
         runId,
         promptText: text,
         sink,
+        uiMode,
         contextText,
       });
 

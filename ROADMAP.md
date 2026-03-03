@@ -16,6 +16,7 @@ This document lists current gaps (vs a "production gateway") and the planned dir
 ### Tooling / Permissions
 - Fine-grained policies: current persistent policy is keyed by `(binding_key, tool_kind)` only; no path/cmd scoping.
 - Permission timeouts/cancellation: not implemented.
+- Skills visibility: gateway only knows what ACP reports (no generic "skill invoked" UI unless agent emits a tool_call/update).
 
 ### Observability / Ops
 - No health endpoint.

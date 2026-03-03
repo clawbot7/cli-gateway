@@ -63,6 +63,7 @@ Feishu currently runs in webhook event-subscription mode:
 - `/cron help|list|add|del|enable|disable` manage scheduled prompts
 - `/last` show last run output for this session
 - `/replay [runId]` replay stored `session/update` output for a run (best-effort)
+- `/ui verbose|summary` set UI verbosity for this conversation
 
 ## Security model (default)
 
@@ -70,6 +71,13 @@ Feishu currently runs in webhook event-subscription mode:
 - Tool execution is **deny-by-default**; the user must approve via ACP permission flow.
 - Approvals are interactive (buttons) on Discord/Telegram; `/allow`/`/deny` remain as fallback.
 - You can persist policy choices (e.g. `allow_always` / `reject_always`) per conversation.
+
+## UI modes
+
+- `verbose` (default): show structured messages for tool execution + plan/task updates.
+- `summary`: quieter.
+
+Set per conversation: `/ui verbose|summary`.
 
 ## Memory (context replay)
 

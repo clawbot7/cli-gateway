@@ -43,6 +43,9 @@ const configSchema = z.object({
     .default(15 * 60),
   maxBindingRuntimes: z.number().int().min(1).max(200).default(30),
 
+  uiDefaultMode: z.enum(['verbose', 'summary']).default('verbose'),
+  uiJsonMaxChars: z.number().int().min(200).max(200_000).default(12_000),
+
   contextReplayEnabled: z.boolean().default(true),
   contextReplayRuns: z.number().int().min(0).max(50).default(8),
   contextReplayMaxChars: z.number().int().min(200).max(200_000).default(12_000),
@@ -77,6 +80,9 @@ export function loadConfig(): AppConfig {
       Number(process.env.RUNTIME_IDLE_TTL_SECONDS ?? '') || undefined,
     maxBindingRuntimes:
       Number(process.env.MAX_BINDING_RUNTIMES ?? '') || undefined,
+
+    uiDefaultMode: (process.env.UI_DEFAULT_MODE as any) || undefined,
+    uiJsonMaxChars: Number(process.env.UI_JSON_MAX_CHARS ?? '') || undefined,
 
     contextReplayEnabled:
       booleanFromEnv.parse(process.env.CONTEXT_REPLAY_ENABLED) ?? true,

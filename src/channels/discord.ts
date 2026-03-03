@@ -166,9 +166,20 @@ function createDiscordSink(
       );
 
       const toolKind = req.toolKind ? ` (${req.toolKind})` : '';
-      const text = `Permission required: ${req.toolTitle}${toolKind}. <@${userId}> click to allow or deny.`;
+      const prefix = req.uiMode === 'summary' ? '[permission]' : 'Permission required:';
+      const text = `${prefix} ${req.toolTitle}${toolKind}. <@${userId}> click to allow or deny.`;
 
       await sendChannel.send({ content: text, components: [row] });
     },
+    sendUi: async (event) => {
+      const header = `**[${event.kind}]** ${event.title}`;
+      const body = event.detail ? `\n\n\`\`\`json\n${truncate(event.detail, 1500)}\n\`\`\`` : '';
+      await sendChannel.send(`${header}${body}`);
+    },
   };
+}
+
+function truncate(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen - 3) + '...';
 }

@@ -56,6 +56,14 @@ export type PermissionDecision =
   | { kind: 'selected'; optionId: string }
   | { kind: 'cancelled' };
 
+export type ClientToolEvent = {
+  phase: 'start' | 'end' | 'error';
+  method: string;
+  params: unknown;
+  result?: unknown;
+  error?: string;
+};
+
 export type AcpClientEvents = {
   onSessionUpdate?: (
     run: AcpRun,
@@ -64,6 +72,7 @@ export type AcpClientEvents = {
     eventSeq: number,
   ) => void;
   onPermissionRequest?: (req: PermissionRequest) => void;
+  onClientTool?: (run: AcpRun, event: ClientToolEvent) => void;
   onAgentStderr?: (line: string) => void;
 };
 
@@ -227,6 +236,13 @@ export class AcpClient {
   }
 
   private async handleAgentRequest(req: JsonRpcRequest): Promise<void> {
+    const run = this.currentRun;
+
+    const emitTool = (event: ClientToolEvent) => {
+      if (!run) return;
+      this.events.onClientTool?.(run, event);
+    };
+
     try {
       switch (req.method) {
         case 'session/request_permission': {
@@ -245,6 +261,8 @@ export class AcpClient {
 
         case 'fs/read_text_file': {
           const params = req.params as FsReadTextFileParams;
+          emitTool({ phase: 'start', method: req.method, params });
+
           this.assertAuthorized('read');
           const resolvedPath = resolveWorkspacePath(
             this.workspaceRoot,
@@ -256,11 +274,20 @@ export class AcpClient {
             params.limit,
           );
           this.respond(req.id, { content } satisfies FsReadTextFileResult);
+
+          emitTool({
+            phase: 'end',
+            method: req.method,
+            params,
+            result: { bytes: content.length },
+          });
           return;
         }
 
         case 'fs/write_text_file': {
           const params = req.params as FsWriteTextFileParams;
+          emitTool({ phase: 'start', method: req.method, params: { path: params.path } });
+
           this.assertAuthorized('edit');
           const resolvedPath = resolveWorkspacePath(
             this.workspaceRoot,
@@ -269,14 +296,42 @@ export class AcpClient {
           fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
           fs.writeFileSync(resolvedPath, params.content, 'utf8');
           this.respond(req.id, {});
+
+          emitTool({
+            phase: 'end',
+            method: req.method,
+            params: { path: params.path },
+            result: { bytes: params.content.length },
+          });
           return;
         }
 
         case 'terminal/create': {
           const params = req.params as TerminalCreateParams;
+          emitTool({
+            phase: 'start',
+            method: req.method,
+            params: {
+              command: params.command,
+              args: params.args,
+              cwd: params.cwd,
+            },
+          });
+
           this.assertAuthorized('execute');
           const terminalId = await this.terminalCreate(params);
           this.respond(req.id, { terminalId } satisfies TerminalCreateResult);
+
+          emitTool({
+            phase: 'end',
+            method: req.method,
+            params: {
+              command: params.command,
+              args: params.args,
+              cwd: params.cwd,
+            },
+            result: { terminalId },
+          });
           return;
         }
 
@@ -289,8 +344,21 @@ export class AcpClient {
 
         case 'terminal/wait_for_exit': {
           const params = req.params as TerminalWaitForExitParams;
+          emitTool({
+            phase: 'start',
+            method: req.method,
+            params: { terminalId: params.terminalId },
+          });
+
           const res = await this.terminalWaitForExit(params);
           this.respond(req.id, res);
+
+          emitTool({
+            phase: 'end',
+            method: req.method,
+            params: { terminalId: params.terminalId },
+            result: res,
+          });
           return;
         }
 
@@ -315,6 +383,12 @@ export class AcpClient {
       }
     } catch (error: any) {
       log.error('Agent request handler error', req.method, error);
+      emitTool({
+        phase: 'error',
+        method: req.method,
+        params: req.params,
+        error: String(error?.message ?? error),
+      });
       this.respondError(req.id, -32000, String(error?.message ?? error));
     }
   }

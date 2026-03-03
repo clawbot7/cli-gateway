@@ -155,12 +155,28 @@ function createTelegramSink(
         .text('❌ Deny', denyData);
 
       const toolKind = req.toolKind ? ` (${req.toolKind})` : '';
-      const text = `Permission required: ${req.toolTitle}${toolKind}. Only user ${userId} can approve.`;
+      const prefix = req.uiMode === 'summary' ? '[permission]' : 'Permission required:';
+      const text = `${prefix} ${req.toolTitle}${toolKind}. Only user ${userId} can approve.`;
 
       await bot.api.sendMessage(chatId, text, {
         message_thread_id: threadId ?? undefined,
         reply_markup: keyboard,
       });
     },
+    sendUi: async (event) => {
+      const header = `[${event.kind}] ${event.title}`;
+      const detail = event.detail
+        ? `\n\n${truncate(event.detail, 3000)}`
+        : '';
+
+      await bot.api.sendMessage(chatId, `${header}${detail}`, {
+        message_thread_id: threadId ?? undefined,
+      });
+    },
   };
+}
+
+function truncate(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen - 3) + '...';
 }

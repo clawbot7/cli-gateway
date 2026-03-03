@@ -1,7 +1,7 @@
 import { log } from '../logging.js';
 import type { Db } from '../db/db.js';
 import type { AppConfig } from '../config.js';
-import type { OutboundSink } from './types.js';
+import type { OutboundSink, UiMode } from './types.js';
 import { AcpClient, type PermissionRequest } from '../acp/client.js';
 import type { InitializeResult } from '../acp/types.js';
 import { updateAcpSessionId, updateLoadSupported } from './sessionStore.js';
@@ -26,6 +26,7 @@ export class BindingRuntime {
 
   private currentRunId: string | null = null;
   private currentRunLastSeq = 0;
+  private currentUiMode: UiMode = 'verbose';
 
   constructor(params: {
     db: Db;
@@ -62,18 +63,72 @@ export class BindingRuntime {
             await sink.sendText(text);
           }
 
-          if (
-            update?.sessionUpdate === 'tool_call' ||
-            update?.sessionUpdate === 'tool_call_update'
-          ) {
-            await sink.sendText(
-              `\n[tool] ${update?.title ?? update?.toolCallId ?? 'tool_call'}`,
-            );
+          if (update?.sessionUpdate === 'plan') {
+            const detail = renderJson(update, this.config.uiJsonMaxChars);
+            if (sink.sendUi) {
+              await sink.sendUi({
+                kind: 'plan',
+                mode: this.currentUiMode,
+                title: 'Plan updated',
+                detail: this.currentUiMode === 'verbose' ? detail : undefined,
+              });
+            } else {
+              await sink.sendText(
+                this.currentUiMode === 'verbose'
+                  ? `\n[plan]\n${detail}\n`
+                  : '\n[plan updated]\n',
+              );
+            }
           }
 
-          if (update?.sessionUpdate === 'plan') {
-            await sink.sendText('\n[plan]\n');
+          if (update?.sessionUpdate === 'task') {
+            const detail = renderJson(update, this.config.uiJsonMaxChars);
+            if (sink.sendUi) {
+              await sink.sendUi({
+                kind: 'task',
+                mode: this.currentUiMode,
+                title: 'Task update',
+                detail: this.currentUiMode === 'verbose' ? detail : undefined,
+              });
+            } else {
+              await sink.sendText(
+                this.currentUiMode === 'verbose'
+                  ? `\n[task]\n${detail}\n`
+                  : '\n[task updated]\n',
+              );
+            }
           }
+        },
+        onClientTool: (run, event) => {
+          const sink = this.activeSink;
+          if (!sink) return;
+
+          if (run.runId !== this.currentRunId) return;
+
+          const title = `${event.method} (${event.phase})`;
+          const detail =
+            this.currentUiMode === 'verbose'
+              ? renderJson(
+                  { params: event.params, result: event.result, error: event.error },
+                  this.config.uiJsonMaxChars,
+                )
+              : undefined;
+
+          if (sink.sendUi) {
+            void sink.sendUi({
+              kind: 'tool',
+              mode: this.currentUiMode,
+              title,
+              detail,
+            });
+            return;
+          }
+
+          void sink.sendText(
+            this.currentUiMode === 'verbose'
+              ? `\n[tool] ${title}\n${detail ?? ''}\n`
+              : `\n[tool] ${title}`,
+          );
         },
         onPermissionRequest: (req) => {
           const sink = this.activeSink;
@@ -125,6 +180,7 @@ export class BindingRuntime {
 
           if (sink.requestPermission) {
             void sink.requestPermission({
+              uiMode: this.currentUiMode,
               sessionKey: this.sessionKey,
               requestId: String(req.requestId),
               toolTitle: title,
@@ -292,6 +348,7 @@ export class BindingRuntime {
     runId: string;
     promptText: string;
     sink: OutboundSink;
+    uiMode: UiMode;
     contextText?: string;
   }): Promise<{ stopReason: string; lastSeq: number }> {
     const next = this.queue.then(async () => {
@@ -300,6 +357,7 @@ export class BindingRuntime {
 
       this.currentRunId = params.runId;
       this.currentRunLastSeq = 0;
+      this.currentUiMode = params.uiMode;
       this.activeSink = params.sink;
 
       try {
@@ -326,6 +384,7 @@ export class BindingRuntime {
       } finally {
         this.activeSink = null;
         this.currentRunId = null;
+        this.currentUiMode = 'verbose';
       }
     });
 
@@ -364,4 +423,14 @@ function formatPermissionRequest(req: PermissionRequest): string {
     .join('\n');
 
   return `\n[permission required]\nTool: ${req.params.toolCall?.title ?? req.params.toolCall?.toolCallId ?? 'tool_call'}\n${options}\nReply with /allow <n> or /deny`;
+}
+
+function renderJson(value: unknown, maxChars: number): string {
+  try {
+    const text = JSON.stringify(value, null, 2);
+    if (text.length <= maxChars) return text;
+    return text.slice(0, maxChars - 3) + '...';
+  } catch {
+    return String(value);
+  }
 }

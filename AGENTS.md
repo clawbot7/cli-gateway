@@ -20,6 +20,11 @@ This file is for coding agents (Codex/Claude/etc) working in this repository.
 - Scheduler: `src/scheduler/scheduler.ts`
 - Channel sinks: `src/channels/discord.ts`, `src/channels/telegram.ts`, `src/channels/feishu.ts`
 
+## UI
+
+- UI modes: `verbose` (default) and `summary`.
+- Per-conversation override: `/ui verbose|summary` (stored in DB `ui_prefs`).
+
 ## Local dev
 
 - Install: `npm i`
