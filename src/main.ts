@@ -1,7 +1,4 @@
-import fs from 'node:fs';
 import path from 'node:path';
-
-import 'dotenv/config';
 
 import { loadConfig } from './config.js';
 import { log } from './logging.js';
@@ -15,8 +12,6 @@ import { startScheduler } from './scheduler/scheduler.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
-
-  fs.mkdirSync(config.workspaceRoot, { recursive: true });
 
   const db = openDb(config.dbPath);
   migrate(db);

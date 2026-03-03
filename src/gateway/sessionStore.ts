@@ -63,6 +63,13 @@ export function upsertBinding(
 
 export function deleteBinding(db: Db, key: ConversationKey): void {
   const bindingKey = bindingKeyFromConversationKey(key);
+
+  // Bindings are referenced by several tables; delete dependents first.
+  db.prepare('DELETE FROM jobs WHERE binding_key = ?').run(bindingKey);
+  db.prepare('DELETE FROM tool_policies WHERE binding_key = ?').run(bindingKey);
+  db.prepare('DELETE FROM ui_prefs WHERE binding_key = ?').run(bindingKey);
+  db.prepare('DELETE FROM delivery_checkpoints WHERE binding_key = ?').run(bindingKey);
+
   db.prepare('DELETE FROM bindings WHERE binding_key = ?').run(bindingKey);
 }
 
@@ -113,6 +120,15 @@ export function updateLoadSupported(
   db.prepare(
     'UPDATE sessions SET load_supported = ?, updated_at = ? WHERE session_key = ?',
   ).run(loadSupported ? 1 : 0, now, sessionKey);
+}
+
+export function updateSessionCwd(db: Db, sessionKey: string, cwd: string): void {
+  const now = Date.now();
+  db.prepare('UPDATE sessions SET cwd = ?, updated_at = ? WHERE session_key = ?').run(
+    cwd,
+    now,
+    sessionKey,
+  );
 }
 
 export function getSession(

@@ -28,25 +28,31 @@ export class BindingRuntime {
   private currentRunLastSeq = 0;
   private currentUiMode: UiMode = 'verbose';
 
+  private readonly workspaceRoot: string;
+
   constructor(params: {
     db: Db;
     config: AppConfig;
     toolAuth: ToolAuth;
     sessionKey: string;
     bindingKey: string;
+    workspaceRoot: string;
+    acpRpc?: import('../acp/stdio.js').StdioProcess;
   }) {
     this.db = params.db;
     this.config = params.config;
     this.toolAuth = params.toolAuth;
     this.sessionKey = params.sessionKey;
     this.bindingKey = params.bindingKey;
+    this.workspaceRoot = params.workspaceRoot;
 
     this.client = new AcpClient({
       db: this.db,
-      workspaceRoot: this.config.workspaceRoot,
+      workspaceRoot: this.workspaceRoot,
       agentCommand: this.config.acpAgentCommand,
       agentArgs: this.config.acpAgentArgs,
       toolAuth: this.toolAuth,
+      rpc: params.acpRpc,
       events: {
         onSessionUpdate: async (run, _sessionId, update, eventSeq) => {
           if (run.runId === this.currentRunId) {
@@ -224,7 +230,7 @@ export class BindingRuntime {
     await this.ensureInitialized();
 
     const newSession = await this.client.newSession({
-      cwd: this.config.workspaceRoot,
+      cwd: this.workspaceRoot,
       mcpServers: [],
     });
 

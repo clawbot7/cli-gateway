@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 .data/
+coverage/
 *.db
 *.db-wal
 *.db-shm

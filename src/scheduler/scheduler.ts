@@ -4,6 +4,7 @@ import type { Db } from '../db/db.js';
 import type { GatewayRouter, OutboundSink } from '../gateway/router.js';
 import type { Platform } from '../gateway/sessionStore.js';
 import { log } from '../logging.js';
+import { renderTemplate } from './template.js';
 
 export type Scheduler = {
   reload: () => void;
@@ -119,9 +120,3 @@ export function startScheduler(params: {
   };
 }
 
-function renderTemplate(template: string): string {
-  const now = new Date();
-  return template
-    .replaceAll('{{now_iso}}', now.toISOString())
-    .replaceAll('{{date}}', now.toISOString().slice(0, 10));
-}

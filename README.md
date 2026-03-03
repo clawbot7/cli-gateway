@@ -36,9 +36,11 @@ npm i
 
 2. Configure
 
-```bash
-cp .env.example .env
-```
+On first run, `cli-gateway` creates a default config file at:
+
+- `~/.cli-gateway/config.json`
+
+Edit that file to add tokens / agent command / defaults. See `skills.md`.
 
 3. Run
 
@@ -51,8 +53,7 @@ npm run dev
 Feishu currently runs in webhook event-subscription mode:
 
 - Listener: `http(s)://<host>:FEISHU_LISTEN_PORT/feishu/events`
-- Required env: `FEISHU_APP_ID`, `FEISHU_APP_SECRET`
-- Optional verification: set `FEISHU_VERIFICATION_TOKEN` and configure the same token in Feishu
+- Config file keys: `feishuAppId`, `feishuAppSecret`, `feishuVerificationToken`, `feishuListenPort`
 - Assumption: event payloads are **not** encrypted (no encrypt key)
 
 ## Chat commands (MVP)
@@ -64,10 +65,11 @@ Feishu currently runs in webhook event-subscription mode:
 - `/last` show last run output for this session
 - `/replay [runId]` replay stored `session/update` output for a run (best-effort)
 - `/ui verbose|summary` set UI verbosity for this conversation
+- `/workspace show|~|~/...|/abs/path` show/set per-conversation workspace root (alias: `/ws`)
 
 ## Security model (default)
 
-- File system and terminal tool calls are restricted to `WORKSPACE_ROOT`.
+- File system and terminal tool calls are restricted to the active workspace root (per conversation; see `/workspace`).
 - Tool execution is **deny-by-default**; the user must approve via ACP permission flow.
 - Approvals are interactive (buttons) on Discord/Telegram; `/allow`/`/deny` remain as fallback.
 - You can persist policy choices (e.g. `allow_always` / `reject_always`) per conversation.

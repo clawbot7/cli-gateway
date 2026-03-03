@@ -1,96 +1,126 @@
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { z } from 'zod';
 
-const booleanFromEnv = z
-  .string()
-  .optional()
-  .transform((value) => {
-    if (value === undefined) return undefined;
-    return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+function resolveHomeDir(): string {
+  return os.homedir();
+}
+
+export function resolveGatewayHomeDir(): string {
+  const env = process.env.CLI_GATEWAY_HOME;
+  if (env?.trim()) return expandPath(env.trim(), resolveHomeDir());
+  return path.join(resolveHomeDir(), '.cli-gateway');
+}
+
+export function configFilePath(gatewayHome: string): string {
+  return path.join(gatewayHome, 'config.json');
+}
+
+function expandPath(raw: string, homeDir: string): string {
+  if (raw === '~') return homeDir;
+  if (raw.startsWith('~/')) return path.join(homeDir, raw.slice(2));
+  return raw;
+}
+
+function resolvePathRelativeTo(
+  raw: string,
+  baseDir: string,
+  homeDir: string,
+): string {
+  const expanded = expandPath(raw, homeDir);
+  if (path.isAbsolute(expanded)) return expanded;
+  return path.join(baseDir, expanded);
+}
+
+function createConfigSchema(defaults: {
+  defaultWorkspaceRoot: string;
+  defaultDbPath: string;
+}): z.ZodType<any> {
+  const absPath = z
+    .string()
+    .min(1)
+    .refine((p) => path.isAbsolute(p), {
+      message: 'must be an absolute path',
+    });
+
+  return z.object({
+    discordToken: z.string().optional(),
+    discordAllowChannelId: z.string().optional(),
+
+    telegramToken: z.string().optional(),
+
+    feishuAppId: z.string().optional(),
+    feishuAppSecret: z.string().optional(),
+    feishuVerificationToken: z.string().optional(),
+    feishuListenPort: z.number().int().min(1).max(65535).default(3030),
+
+    acpAgentCommand: z.string().min(1).default('npx'),
+    acpAgentArgs: z
+      .array(z.string())
+      .default(['-y', '@zed-industries/codex-acp@latest']),
+
+    // Default workspace is ~ (switchable per conversation via /workspace)
+    workspaceRoot: absPath.default(defaults.defaultWorkspaceRoot),
+
+    // Default DB path lives under ~/.cli-gateway
+    dbPath: z.string().min(1).default(defaults.defaultDbPath),
+
+    schedulerEnabled: z.boolean().default(true),
+
+    runtimeIdleTtlSeconds: z.number().int().min(10).default(15 * 60),
+    maxBindingRuntimes: z.number().int().min(1).max(200).default(30),
+
+    uiDefaultMode: z.enum(['verbose', 'summary']).default('verbose'),
+    uiJsonMaxChars: z.number().int().min(200).max(200_000).default(12_000),
+
+    contextReplayEnabled: z.boolean().default(true),
+    contextReplayRuns: z.number().int().min(0).max(50).default(8),
+    contextReplayMaxChars: z.number().int().min(200).max(200_000).default(12_000),
   });
+}
 
-const absPath = z
-  .string()
-  .min(1)
-  .refine((p) => path.isAbsolute(p), {
-    message: 'must be an absolute path',
-  });
-
-const configSchema = z.object({
-  discordToken: z.string().optional(),
-  discordAllowChannelId: z.string().optional(),
-
-  telegramToken: z.string().optional(),
-
-  feishuAppId: z.string().optional(),
-  feishuAppSecret: z.string().optional(),
-  feishuVerificationToken: z.string().optional(),
-  feishuListenPort: z.number().int().min(1).max(65535).default(3030),
-
-  acpAgentCommand: z.string().min(1),
-  acpAgentArgs: z.array(z.string()),
-
-  workspaceRoot: absPath,
-  dbPath: z.string().min(1),
-
-  schedulerEnabled: z.boolean().default(true),
-
-  runtimeIdleTtlSeconds: z
-    .number()
-    .int()
-    .min(10)
-    .default(15 * 60),
-  maxBindingRuntimes: z.number().int().min(1).max(200).default(30),
-
-  uiDefaultMode: z.enum(['verbose', 'summary']).default('verbose'),
-  uiJsonMaxChars: z.number().int().min(200).max(200_000).default(12_000),
-
-  contextReplayEnabled: z.boolean().default(true),
-  contextReplayRuns: z.number().int().min(0).max(50).default(8),
-  contextReplayMaxChars: z.number().int().min(200).max(200_000).default(12_000),
-});
-
-export type AppConfig = z.infer<typeof configSchema>;
+export type AppConfig = z.infer<ReturnType<typeof createConfigSchema>>;
 
 export function loadConfig(): AppConfig {
-  const parsed = configSchema.parse({
-    discordToken: process.env.DISCORD_TOKEN,
-    discordAllowChannelId: process.env.DISCORD_ALLOW_CHANNEL_ID,
-    telegramToken: process.env.TELEGRAM_TOKEN,
+  const homeDir = resolveHomeDir();
+  const gatewayHome = resolveGatewayHomeDir();
 
-    feishuAppId: process.env.FEISHU_APP_ID,
-    feishuAppSecret: process.env.FEISHU_APP_SECRET,
-    feishuVerificationToken: process.env.FEISHU_VERIFICATION_TOKEN,
-    feishuListenPort: Number(process.env.FEISHU_LISTEN_PORT ?? '') || undefined,
+  fs.mkdirSync(gatewayHome, { recursive: true });
 
-    acpAgentCommand: process.env.ACP_AGENT_COMMAND,
-    acpAgentArgs: (process.env.ACP_AGENT_ARGS ?? '')
-      .split(' ')
-      .map((s) => s.trim())
-      .filter(Boolean),
+  const defaults = {
+    defaultWorkspaceRoot: homeDir,
+    defaultDbPath: path.join(gatewayHome, 'data', 'gateway.db'),
+  };
 
-    workspaceRoot: process.env.WORKSPACE_ROOT ?? '/tmp/cli-gateway-workspace',
-    dbPath: process.env.DB_PATH ?? '.data/gateway.db',
+  const schema = createConfigSchema(defaults);
 
-    schedulerEnabled:
-      booleanFromEnv.parse(process.env.SCHEDULER_ENABLED) ?? true,
+  const file = configFilePath(gatewayHome);
 
-    runtimeIdleTtlSeconds:
-      Number(process.env.RUNTIME_IDLE_TTL_SECONDS ?? '') || undefined,
-    maxBindingRuntimes:
-      Number(process.env.MAX_BINDING_RUNTIMES ?? '') || undefined,
+  let raw: any;
+  if (fs.existsSync(file)) {
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } else {
+    raw = {
+      workspaceRoot: defaults.defaultWorkspaceRoot,
+      dbPath: defaults.defaultDbPath,
+      acpAgentCommand: 'npx',
+      acpAgentArgs: ['-y', '@zed-industries/codex-acp@latest'],
+      uiDefaultMode: 'verbose',
+      schedulerEnabled: true,
+    };
 
-    uiDefaultMode: (process.env.UI_DEFAULT_MODE as any) || undefined,
-    uiJsonMaxChars: Number(process.env.UI_JSON_MAX_CHARS ?? '') || undefined,
+    fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+  }
 
-    contextReplayEnabled:
-      booleanFromEnv.parse(process.env.CONTEXT_REPLAY_ENABLED) ?? true,
-    contextReplayRuns:
-      Number(process.env.CONTEXT_REPLAY_RUNS ?? '') || undefined,
-    contextReplayMaxChars:
-      Number(process.env.CONTEXT_REPLAY_MAX_CHARS ?? '') || undefined,
-  });
+  // Normalize paths.
+  if (typeof raw?.workspaceRoot === 'string') {
+    raw.workspaceRoot = resolvePathRelativeTo(raw.workspaceRoot, gatewayHome, homeDir);
+  }
+  if (typeof raw?.dbPath === 'string') {
+    raw.dbPath = resolvePathRelativeTo(raw.dbPath, gatewayHome, homeDir);
+  }
 
-  return parsed;
+  return schema.parse(raw);
 }

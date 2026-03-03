@@ -72,3 +72,45 @@ test('buildReplayContextFromRecentRuns returns chronological context', () => {
   assert.ok(ctx.includes('Assistant: first answer'));
   assert.ok(!ctx.includes('second answer'));
 });
+
+test('buildReplayContextFromRecentRuns uses error/stopReason fallback and ignores malformed events', () => {
+  const db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
+  migrate(db);
+
+  const sessionKey = 's1';
+  insertSession(db, sessionKey);
+
+  const t1 = Date.now() - 20_000;
+
+  insertRun(db, 'r1', sessionKey, 'x?', t1);
+
+  // malformed JSON event should be ignored
+  db.prepare(
+    `
+    INSERT INTO events(run_id, seq, method, payload_json, created_at)
+    VALUES(?, ?, 'session/update', ?, ?)
+    `,
+  ).run('r1', 1, '{bad json', Date.now());
+
+  // stop_reason fallback
+  db.prepare('UPDATE runs SET stop_reason = ? WHERE run_id = ?').run('end', 'r1');
+
+  const ctx = buildReplayContextFromRecentRuns(db, {
+    sessionKey,
+    excludeRunId: 'none',
+    maxRuns: 10,
+    maxChars: 10_000,
+  });
+
+  assert.ok(ctx.includes('[stop_reason] end'));
+
+  // truncation
+  const ctx2 = buildReplayContextFromRecentRuns(db, {
+    sessionKey,
+    excludeRunId: 'none',
+    maxRuns: 10,
+    maxChars: 10,
+  });
+  assert.ok(ctx2.length < ctx.length);
+});

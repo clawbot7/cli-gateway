@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import type { Db } from '../db/db.js';
 import type { AppConfig } from '../config.js';
@@ -11,6 +14,7 @@ import {
   finishRun,
   getBinding,
   getSession,
+  updateSessionCwd,
   upsertBinding,
   type ConversationKey,
   type Platform,
@@ -35,6 +39,14 @@ export class GatewayRouter {
   private readonly config: AppConfig;
   private readonly toolAuth: ToolAuth;
   private readonly onJobsChanged?: () => void;
+  private readonly runtimeFactory?: (params: {
+    db: Db;
+    config: AppConfig;
+    toolAuth: ToolAuth;
+    sessionKey: string;
+    bindingKey: string;
+    workspaceRoot: string;
+  }) => BindingRuntime;
 
   private readonly runtimesBySessionKey = new Map<
     string,
@@ -47,10 +59,19 @@ export class GatewayRouter {
     db: Db;
     config: AppConfig;
     onJobsChanged?: () => void;
+    runtimeFactory?: (params: {
+      db: Db;
+      config: AppConfig;
+      toolAuth: ToolAuth;
+      sessionKey: string;
+      bindingKey: string;
+      workspaceRoot: string;
+    }) => BindingRuntime;
   }) {
     this.db = params.db;
     this.config = params.config;
     this.onJobsChanged = params.onJobsChanged;
+    this.runtimeFactory = params.runtimeFactory;
     this.toolAuth = new ToolAuth(this.db);
   }
 
@@ -112,13 +133,28 @@ export class GatewayRouter {
       return existing.runtime;
     }
 
-    const rt = new BindingRuntime({
-      db: this.db,
-      config: this.config,
-      toolAuth: this.toolAuth,
-      sessionKey: params.sessionKey,
-      bindingKey: params.bindingKey,
-    });
+    const sess = getSession(this.db, params.sessionKey);
+    if (!sess) {
+      throw new Error(`Missing session row: ${params.sessionKey}`);
+    }
+
+    const rt = this.runtimeFactory
+      ? this.runtimeFactory({
+          db: this.db,
+          config: this.config,
+          toolAuth: this.toolAuth,
+          sessionKey: params.sessionKey,
+          bindingKey: params.bindingKey,
+          workspaceRoot: sess.cwd,
+        })
+      : new BindingRuntime({
+          db: this.db,
+          config: this.config,
+          toolAuth: this.toolAuth,
+          sessionKey: params.sessionKey,
+          bindingKey: params.bindingKey,
+          workspaceRoot: sess.cwd,
+        });
 
     this.runtimesBySessionKey.set(params.sessionKey, {
       runtime: rt,
@@ -141,6 +177,32 @@ export class GatewayRouter {
     }
 
     this.enforceRuntimeLimit();
+  }
+
+  private resolveWorkspaceArg(arg: string): string {
+    const trimmed = arg.trim();
+    if (!trimmed) {
+      throw new Error('Empty workspace path');
+    }
+
+    const home = os.homedir();
+    const expanded =
+      trimmed === '~'
+        ? home
+        : trimmed.startsWith('~/')
+          ? path.join(home, trimmed.slice(2))
+          : trimmed;
+
+    if (!path.isAbsolute(expanded)) {
+      throw new Error('Workspace path must be absolute');
+    }
+
+    const stat = fs.statSync(expanded, { throwIfNoEntry: false });
+    if (!stat || !stat.isDirectory()) {
+      throw new Error('Workspace path must exist and be a directory');
+    }
+
+    return expanded;
   }
 
   private enforceRuntimeLimit(): void {
@@ -166,6 +228,9 @@ export class GatewayRouter {
     decision: 'allow' | 'deny';
     actorUserId: string;
   }): Promise<{ ok: boolean; message: string }> {
+    // Permissions require a live runtime because the ACP agent is process-local.
+    // If the runtime has been GC'ed, the user must send a new message.
+
     const binding = this.db
       .prepare(
         'SELECT binding_key as bindingKey, platform, chat_id as chatId, user_id as userId FROM bindings WHERE session_key = ? ORDER BY updated_at DESC LIMIT 1',
@@ -302,6 +367,46 @@ export class GatewayRouter {
 
         setUiMode(this.db, bindingKey, arg as UiMode);
         await sink.sendText(`OK: UI mode set to ${arg}`);
+        return true;
+      }
+
+      case '/workspace':
+      case '/ws': {
+        const binding = getBinding(this.db, key);
+        if (!binding) {
+          await sink.sendText('No session binding. Send a message first.');
+          return true;
+        }
+
+        const arg = parts.slice(1).join(' ').trim();
+        const sess = getSession(this.db, binding.sessionKey);
+        if (!sess) {
+          await sink.sendText('Missing session row.');
+          return true;
+        }
+
+        if (!arg || arg === 'show') {
+          await sink.sendText(`Workspace: ${sess.cwd}`);
+          return true;
+        }
+
+        let nextCwd: string;
+        try {
+          nextCwd = this.resolveWorkspaceArg(arg);
+        } catch (error: any) {
+          await sink.sendText(`Error: ${String(error?.message ?? error)}`);
+          return true;
+        }
+
+        updateSessionCwd(this.db, binding.sessionKey, nextCwd);
+
+        const entry = this.runtimesBySessionKey.get(binding.sessionKey);
+        if (entry) {
+          entry.runtime.close();
+          this.runtimesBySessionKey.delete(binding.sessionKey);
+        }
+
+        await sink.sendText(`OK: workspace set to ${nextCwd}`);
         return true;
       }
 
@@ -527,7 +632,11 @@ export class GatewayRouter {
 
     // Ensure session row exists (cron may have created binding+session already).
     const sess = getSession(this.db, sessionKey);
+
+    /* c8 ignore next 11 */
     if (!sess) {
+      // With foreign_keys=ON, a binding cannot exist without a session.
+      // Keep as a defensive fallback.
       createSession(this.db, {
         sessionKey,
         agentCommand: this.config.acpAgentCommand,
