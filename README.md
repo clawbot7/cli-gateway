@@ -52,7 +52,7 @@ npm run dev
 
 Feishu currently runs in webhook event-subscription mode:
 
-- Listener: `http(s)://<host>:FEISHU_LISTEN_PORT/feishu/events`
+- Listener: `http(s)://<host>:<feishuListenPort>/feishu/events`
 - Config file keys: `feishuAppId`, `feishuAppSecret`, `feishuVerificationToken`, `feishuListenPort`
 - Assumption: event payloads are **not** encrypted (no encrypt key)
 
@@ -87,8 +87,8 @@ ACP sessions are process-local; if the gateway restarts (or an idle runtime is G
 
 To reduce this, `cli-gateway` can replay recent conversation runs from the DB into the first prompt of a fresh ACP session:
 
-- Env: `CONTEXT_REPLAY_ENABLED`, `CONTEXT_REPLAY_RUNS`, `CONTEXT_REPLAY_MAX_CHARS`
-- Default: enabled, last 8 runs, max 12k chars
+- Config keys: `contextReplayEnabled`, `contextReplayRuns`, `contextReplayMaxChars`
+- Default: enabled, last 8 runs, max 12k chars (used only on fresh ACP sessions)
 
 ## Status
 

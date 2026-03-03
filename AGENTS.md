@@ -32,7 +32,7 @@ This file is for coding agents (Codex/Claude/etc) working in this repository.
 - Build: `npm run build`
 - Lint: `npm run lint`
 
-Config is env-based; see `.env.example`.
+Config is file-based; see `~/.cli-gateway/config.json` (example in `skills.md`).
 
 ## Conventions / constraints
 
