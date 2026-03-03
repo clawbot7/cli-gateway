@@ -33,7 +33,7 @@
     "start": "node dist/main.js",
     "lint": "eslint .",
     "format": "prettier -w .",
-    "test": "node --test",
+    "test": "node --import tsx --test",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

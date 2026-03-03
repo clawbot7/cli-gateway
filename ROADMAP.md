@@ -24,8 +24,8 @@ This document lists current gaps (vs a "production gateway") and the planned dir
 - Minimal structured logging.
 
 ### Tests & CI
-- No automated tests.
-- No CI pipeline.
+- Basic unit tests exist (migrations/uiPrefs/history).
+- GitHub Actions CI runs build/lint/test.
 
 ## Implemented Recently
 
