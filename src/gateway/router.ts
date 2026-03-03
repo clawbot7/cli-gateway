@@ -625,7 +625,14 @@ export class GatewayRouter {
     sink: OutboundSink,
   ): Promise<void> {
     const commandHandled = await this.handleCommand(key, text, sink);
-    if (commandHandled) return;
+    if (commandHandled) {
+      try {
+        await sink.flush?.();
+      } catch (error) {
+        log.warn('sink flush error (command)', error);
+      }
+      return;
+    }
 
     const { bindingKey, sessionKey } = this.ensureBindingExists(key);
     const rt = this.getOrCreateRuntime({ sessionKey, bindingKey });
