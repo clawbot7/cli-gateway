@@ -26,25 +26,52 @@ ACP refs:
 - Transports: https://agentclientprotocol.com/protocol/transports
 - Schema: https://agentclientprotocol.com/protocol/schema
 
-## Quickstart
+## Quickstart (Published Package)
 
-1. Install dependencies
+Requirements:
+
+- Node.js >= 18
+
+1. Install
+
+Option A (global):
 
 ```bash
-npm i
+npm i -g cli-gateway
+```
+
+Option B (no global install):
+
+```bash
+npx -y cli-gateway
 ```
 
 2. Configure
 
-On first run, `cli-gateway` creates a default config file at:
+On first run, if config is missing, `cli-gateway` opens an interactive setup wizard and writes:
 
 - `~/.cli-gateway/config.json`
 
-Edit that file to add tokens / agent command / defaults. See `skills.md`.
+You can edit that file any time to update tokens / agent command / defaults. See `skills.md`.
 
 3. Run
 
+If installed globally:
+
 ```bash
+cli-gateway
+```
+
+If using `npx`, use the same command each time:
+
+```bash
+npx -y cli-gateway
+```
+
+## Local Development
+
+```bash
+npm i
 npm run dev
 ```
 

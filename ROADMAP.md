@@ -35,6 +35,7 @@ This document lists current gaps (vs a "production gateway") and the planned dir
 - Delivery checkpoints table + `/replay` command (best-effort).
 - Interactive permission buttons on Discord/Telegram (Allow/Deny).
 - Feishu inbound webhook + outbound send (MVP).
+- First-run interactive config wizard (TTY) + lock directory bootstrap.
 
 ## Suggested Next Steps (Priority)
 

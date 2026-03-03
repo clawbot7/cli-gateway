@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 
 export type ProcessLock = {
   path: string;
@@ -6,6 +7,8 @@ export type ProcessLock = {
 };
 
 export function acquireProcessLock(lockPath: string): ProcessLock {
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+
   try {
     const fd = fs.openSync(lockPath, 'wx');
     try {

@@ -31,7 +31,7 @@ async function main(): Promise<void> {
     process.exit(0);
   });
 
-  const config = loadConfig();
+  const config = await loadConfig({ interactiveBootstrap: true });
 
   const db = openDb(config.dbPath);
   migrate(db);

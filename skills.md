@@ -13,6 +13,7 @@ Override the home directory (useful for testing):
 - `CLI_GATEWAY_HOME=/path/to/dir`
 
 On first run, `cli-gateway` creates a minimal default `config.json` if missing.
+When run in an interactive terminal, first run opens a setup wizard.
 
 ## Example config.json
 
