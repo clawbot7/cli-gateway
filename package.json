@@ -33,8 +33,8 @@
     "start": "node dist/main.js",
     "lint": "eslint .",
     "format": "prettier -w .",
-    "test": "node --import tsx --test test/**/*.test.ts",
-    "coverage": "c8 --all --check-coverage --lines 90 --functions 90 --statements 90 --reporter=text node --import tsx --test test/**/*.test.ts",
+    "test": "node scripts/run-tests.mjs",
+    "coverage": "node scripts/run-coverage.mjs",
     "prepublishOnly": "npm run build"
   },
   "c8": {
@@ -80,6 +80,7 @@
     "@types/node": "^25.3.3",
     "eslint": "^10.0.2",
     "c8": "^10.1.3",
+    "globals": "^15.15.0",
     "prettier": "^3.8.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
