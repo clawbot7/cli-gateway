@@ -58,6 +58,7 @@ Feishu currently runs in webhook event-subscription mode:
 
 ## Chat commands (MVP)
 
+- `/help` show available commands
 - `/new` reset session binding
 - `/allow <n>` select a pending permission option by index (fallback)
 - `/deny` reject a pending permission request (fallback)
