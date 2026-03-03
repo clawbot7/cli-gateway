@@ -1,6 +1,6 @@
 {
   "name": "cli-gateway",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Chat-channel ↔ ACP agent gateway with scheduler",
   "license": "MIT",
@@ -38,7 +38,9 @@
     "prepublishOnly": "npm run build"
   },
   "c8": {
-    "include": ["src/**/*.ts"],
+    "include": [
+      "src/**/*.ts"
+    ],
     "exclude": [
       "src/main.ts",
       "src/bin.ts",
@@ -52,7 +54,10 @@
       "src/logging.ts",
       "dist/**"
     ],
-    "reporter": ["text", "lcov"],
+    "reporter": [
+      "text",
+      "lcov"
+    ],
     "lines": 90,
     "functions": 90,
     "statements": 90
