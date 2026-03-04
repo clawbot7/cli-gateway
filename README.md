@@ -109,6 +109,7 @@ npm run build
 ```
 
 Then guard keeps restarting the app on abnormal exit with exponential backoff.
+Before each launch attempt, guard also checks `gateway.lock` under `CLI_GATEWAY_HOME` (or `~/.cli-gateway`), terminates the lock PID if still alive, and removes stale lock files.
 
 Useful env vars:
 

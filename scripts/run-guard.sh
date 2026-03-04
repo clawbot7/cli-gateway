@@ -22,6 +22,30 @@ LOG_TAIL_LINES="${LOG_TAIL_LINES:-120}"
 DEFAULT_CMD=("node" "dist/main.js")
 RESOLVED_CMD=()
 
+expand_home_path() {
+  local raw="$1"
+
+  if [[ "${raw}" == "~" ]]; then
+    printf '%s\n' "${HOME}"
+    return
+  fi
+
+  if [[ "${raw}" == "~/"* ]]; then
+    printf '%s/%s\n' "${HOME}" "${raw#~/}"
+    return
+  fi
+
+  printf '%s\n' "${raw}"
+}
+
+resolve_gateway_lock_file() {
+  local gateway_home_raw="${CLI_GATEWAY_HOME:-${HOME}/.cli-gateway}"
+  local gateway_home
+
+  gateway_home="$(expand_home_path "${gateway_home_raw}")"
+  printf '%s/gateway.lock\n' "${gateway_home%/}"
+}
+
 ensure_state_dir() {
   mkdir -p "${STATE_DIR}"
 }
@@ -29,6 +53,63 @@ ensure_state_dir() {
 is_running_pid() {
   local pid="$1"
   [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null
+}
+
+read_lock_pid() {
+  local file="$1"
+  local pid
+
+  [[ -f "${file}" ]] || return 1
+
+  pid="$(grep -Eo '"pid"[[:space:]]*:[[:space:]]*[0-9]+' "${file}" | head -n 1 | grep -Eo '[0-9]+' || true)"
+  [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+
+  printf '%s\n' "${pid}"
+}
+
+terminate_pid() {
+  local pid="$1"
+  local label="${2:-process}"
+  local waited=0
+
+  if ! is_running_pid "${pid}"; then
+    return 0
+  fi
+
+  echo "[guard] stopping ${label} pid=${pid}"
+  kill "${pid}" 2>/dev/null || true
+
+  while is_running_pid "${pid}" && [[ "${waited}" -lt "${STOP_TIMEOUT_SECONDS}" ]]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  if is_running_pid "${pid}"; then
+    echo "[guard] ${label} still alive, forcing kill"
+    kill -9 "${pid}" 2>/dev/null || true
+  fi
+}
+
+cleanup_gateway_lock() {
+  local lock_file
+  local pid
+
+  lock_file="$(resolve_gateway_lock_file)"
+  [[ -f "${lock_file}" ]] || return 0
+
+  echo "[guard] lock file detected: ${lock_file}"
+
+  if pid="$(read_lock_pid "${lock_file}" 2>/dev/null || true)"; then
+    if is_running_pid "${pid}"; then
+      terminate_pid "${pid}" "gateway(lock)"
+    else
+      echo "[guard] lock pid is not running pid=${pid}, removing stale lock"
+    fi
+  else
+    echo "[guard] lock pid parse failed, removing lock"
+  fi
+
+  rm -f "${lock_file}"
 }
 
 read_pid_file() {
@@ -142,6 +223,8 @@ start_guard() {
     return 0
   fi
 
+  cleanup_gateway_lock
+
   resolve_command "${cmd[@]}"
   cmd=("${RESOLVED_CMD[@]}")
   save_command "${cmd[@]}"
@@ -197,13 +280,10 @@ stop_guard() {
   fi
 
   if app_pid="$(read_app_pid)"; then
-    echo "[guard] stopping app pid=${app_pid}"
-    kill "${app_pid}" 2>/dev/null || true
-    sleep 1
-    if is_running_pid "${app_pid}"; then
-      kill -9 "${app_pid}" 2>/dev/null || true
-    fi
+    terminate_pid "${app_pid}" "app"
   fi
+
+  cleanup_gateway_lock
 
   rm -f "${PID_FILE}" "${APP_PID_FILE}"
   echo "[guard] stopped"
@@ -291,6 +371,7 @@ run_loop() {
     local delay
 
     start_at="$(date '+%Y-%m-%d %H:%M:%S %z')"
+    cleanup_gateway_lock
     echo "[guard] starting at ${start_at}"
 
     (
