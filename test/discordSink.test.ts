@@ -70,6 +70,22 @@ test('discord sink renders UI events as embed', async () => {
   assert.ok(msg.embeds?.length);
 });
 
+test('discord sink truncates overlong embed titles', async () => {
+  const { channel, sent } = createFakeChannel();
+  const sink = createDiscordSink(channel, 'user1');
+
+  await sink.sendUi!({
+    kind: 'tool',
+    mode: 'summary',
+    title: 'x'.repeat(400),
+  });
+
+  const msg = sent.at(-1);
+  const raw = msg.embeds?.[0]?.data?.title ?? '';
+  assert.ok(typeof raw === 'string');
+  assert.ok(raw.length <= 256);
+});
+
 test('discord sink supports buffered streaming', async () => {
   const { channel, sent, edits } = createFakeChannel();
 

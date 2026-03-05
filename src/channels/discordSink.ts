@@ -74,8 +74,9 @@ export function createDiscordSink(
       await addDiscordPermissionReactions(msg);
     },
     sendUi: async (event) => {
+      const title = truncate(`[${event.kind}] ${event.title}`, 256);
       const embed = new EmbedBuilder()
-        .setTitle(`[${event.kind}] ${event.title}`)
+        .setTitle(title)
         .setColor(colorForKind(event.kind));
 
       if (event.detail && event.mode === 'verbose') {
