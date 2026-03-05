@@ -594,19 +594,21 @@ async function setDiscordInboundReaction(
   message: unknown,
   emoji: string,
 ): Promise<void> {
+  const discordMessage = message as {
+    react?: (nextEmoji: string) => Promise<unknown>;
+  };
   if (
     !message ||
     typeof message !== 'object' ||
-    typeof (message as { react?: unknown }).react !== 'function'
+    typeof discordMessage.react !== 'function'
   ) {
     return;
   }
 
-  const react = (message as { react: (nextEmoji: string) => Promise<unknown> }).react;
   try {
-    await react(emoji);
+    await discordMessage.react(emoji);
   } catch {
-    // best effort
+    // best-effort only
   }
 }
 
@@ -643,28 +645,30 @@ async function clearDiscordInboundReaction(
   try {
     await remove(clientUserId);
   } catch {
-    // best effort
+    // best-effort only
   }
 }
 
 async function addDiscordPermissionReactions(message: unknown): Promise<void> {
+  const discordMessage = message as {
+    react?: (nextEmoji: string) => Promise<unknown>;
+  };
   if (
     !message ||
     typeof message !== 'object' ||
-    typeof (message as { react?: unknown }).react !== 'function'
+    typeof discordMessage.react !== 'function'
   ) {
     return;
   }
 
-  const react = (message as { react: (emoji: string) => Promise<unknown> }).react;
   try {
-    await react('👍');
+    await discordMessage.react('👍');
   } catch {
-    // best-effort shortcut; buttons still available
+    // best-effort only
   }
   try {
-    await react('👎');
+    await discordMessage.react('👎');
   } catch {
-    // best-effort shortcut; buttons still available
+    // best-effort only
   }
 }
