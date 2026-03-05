@@ -19,6 +19,7 @@ This file is for coding agents (Codex/Claude/etc) working in this repository.
 - DB schema/migrations: `src/db/migrations.ts`
 - Scheduler: `src/scheduler/scheduler.ts`
 - Channel sinks: `src/channels/discord.ts`, `src/channels/telegram.ts`, `src/channels/feishu.ts`
+- Process guard/restart bridge: `scripts/run-guard.sh`, `scripts/restart-watcher.sh`
 
 ## UI
 

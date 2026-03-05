@@ -10,6 +10,7 @@ PID_FILE="${STATE_DIR}/guard.pid"
 APP_PID_FILE="${STATE_DIR}/app.pid"
 CMD_FILE="${STATE_DIR}/command.args"
 LOG_FILE="${STATE_DIR}/guard.log"
+RESTART_REQUEST_FILE="${STATE_DIR}/restart.request"
 
 BASE_DELAY="${RESTART_BASE_DELAY_SECONDS:-2}"
 MAX_DELAY="${RESTART_MAX_DELAY_SECONDS:-30}"
@@ -348,6 +349,21 @@ logs_guard() {
   tail -n "${LOG_TAIL_LINES}" "${LOG_FILE}"
 }
 
+request_restart() {
+  local source="${RESTART_REQUEST_SOURCE:-manual}"
+  local now_iso
+  local tmp_file
+
+  ensure_state_dir
+  now_iso="$(date -Iseconds)"
+  tmp_file="${RESTART_REQUEST_FILE}.tmp.$$"
+
+  printf '{"requestedAt":"%s","source":"%s"}\n' "${now_iso}" "${source}" > "${tmp_file}"
+  mv "${tmp_file}" "${RESTART_REQUEST_FILE}"
+
+  echo "[guard] restart request queued: ${RESTART_REQUEST_FILE}"
+}
+
 run_loop() {
   local -a cmd=("$@")
   local attempt=0
@@ -436,11 +452,13 @@ Usage:
   bash scripts/run-guard.sh [start] [-- <command...>]
   bash scripts/run-guard.sh stop
   bash scripts/run-guard.sh restart [-- <command...>]
+  bash scripts/run-guard.sh request-restart
   bash scripts/run-guard.sh status
   bash scripts/run-guard.sh logs [-f]
 
 Notes:
   - `start`/`restart` will run `npm i` and `npm run build` before launching.
+  - `request-restart` only drops a marker file; `scripts/restart-watcher.sh` consumes it.
   - Default command is `node dist/main.js`.
   - Legacy form `bash scripts/run-guard.sh npm run dev` is still supported.
 
@@ -452,12 +470,13 @@ Useful env vars:
   STOP_TIMEOUT_SECONDS (default: 20)
   SKIP_UPDATE=1 to skip npm i/build
   GUARD_STATE_DIR to change pid/log directory
+  RESTART_REQUEST_SOURCE to annotate request-restart payload source
 EOF_USAGE
 }
 
 is_known_action() {
   case "$1" in
-    start|stop|restart|status|logs|help|_run-loop)
+    start|stop|restart|request-restart|status|logs|help|_run-loop)
       return 0
       ;;
     *)
@@ -499,6 +518,9 @@ main() {
       else
         restart_guard
       fi
+      ;;
+    request-restart)
+      request_restart
       ;;
     status)
       status_guard

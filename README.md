@@ -88,7 +88,7 @@ npm run start:guard
 Restart/stop/status/logs:
 
 ```bash
-bash scripts/run-guard.sh restart
+bash scripts/run-guard.sh request-restart
 bash scripts/run-guard.sh stop
 bash scripts/run-guard.sh status
 bash scripts/run-guard.sh logs
@@ -98,10 +98,10 @@ Custom command is supported:
 
 ```bash
 bash scripts/run-guard.sh start -- npm run dev
-bash scripts/run-guard.sh restart -- npm run dev
+bash scripts/run-guard.sh request-restart -- npm run dev
 ```
 
-`start`/`restart` automatically runs:
+`start`/`request-restart` automatically runs:
 
 ```bash
 npm i
@@ -110,6 +110,21 @@ npm run build
 
 Then guard keeps restarting the app on abnormal exit with exponential backoff.
 Before each launch attempt, guard also checks `gateway.lock` under `CLI_GATEWAY_HOME` (or `~/.cli-gateway`), terminates the lock PID if still alive, and removes stale lock files.
+
+Sandbox-friendly restart bridge:
+
+- Run `scripts/restart-watcher.sh` on the host (outside sandbox). It watches `.run-guard/restart.request` and calls `run-guard.sh restart`.
+- From sandbox, only send a restart request marker:
+
+```bash
+bash scripts/run-guard.sh request-restart
+```
+
+- Host watcher startup example:
+
+```bash
+nohup bash scripts/restart-watcher.sh >> .run-guard/restart-watcher.log 2>&1 &
+```
 
 Useful env vars:
 
@@ -120,6 +135,8 @@ Useful env vars:
 - `STOP_TIMEOUT_SECONDS` (default `20`)
 - `SKIP_UPDATE=1` to skip `npm i` + `npm run build`
 - `GUARD_STATE_DIR` to override pid/log directory (default `./.run-guard`)
+- `RESTART_REQUEST_SOURCE` payload source for `request-restart` (default `manual`)
+- `RESTART_REQUEST_COOLDOWN_SECONDS` watcher debounce window (default `10`)
 
 ## Feishu setup (MVP)
 

@@ -38,6 +38,7 @@ This document lists current gaps (vs a "production gateway") and the planned dir
 - Process guard script for auto-restart on abnormal exit (`scripts/run-guard.sh`).
 - Process guard supports daemon lifecycle commands (`start/stop/restart/status/logs`) with `nohup` background mode and auto `npm i && npm run build` on `start/restart`.
 - Process guard now pre-cleans `gateway.lock` (kill lock PID if alive, remove stale lock) before each launch attempt.
+- Added sandbox-safe restart bridge: `run-guard.sh request-restart` marker + host-side `scripts/restart-watcher.sh`.
 - Feishu inbound webhook + outbound send (MVP).
 - First-run interactive config wizard (TTY) + lock directory bootstrap.
 - Default UI mode switched to `summary` (conversation-level `/ui` override still supported).
